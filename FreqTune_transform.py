@@ -3,6 +3,15 @@ import numpy as np
 from PIL import Image
 
 
+def _preserve_dc_and_mean(fft, source_img, output_img):
+    dc_index = tuple(0 for _ in range(source_img.ndim))
+    fft[dc_index] = fft[dc_index].copy()
+
+    output_real = np.real(output_img)
+    output_real = output_real - np.mean(output_real) + np.mean(source_img)
+    return output_real
+
+
 class FreqTune_zhonly(object):
     def __init__(self, probability=0.5):
         self.probability = probability
@@ -142,8 +151,10 @@ class ImprovedFreqTune:
 
 
 class FreqTune(object):
-    def __init__(self, probability=0.5):
+    def __init__(self, probability=0.5, mode='uniform', strength=1.0):
         self.probability = probability
+        self.mode = mode
+        self.strength = strength
 
     def __call__(self, x):
         if random.uniform(0, 1) > self.probability:
@@ -230,8 +241,11 @@ class FreqTune(object):
         return x
 
 class TwoRegionFreqTune(object):
-    def __init__(self, probability=0.5):
+    def __init__(self, probability=0.5, mode='uniform', strength=1.0, preserve_dc=False):
         self.probability = probability
+        self.mode = mode
+        self.strength = strength
+        self.preserve_dc = preserve_dc
 
     def __call__(self, x):
         if random.uniform(0, 1) > self.probability:
@@ -242,6 +256,9 @@ class TwoRegionFreqTune(object):
         img = np.array(x)
         fft_1 = np.fft.fftn(img)
 
+        dc_index = tuple(0 for _ in range(fft_1.ndim))
+        original_dc = fft_1[dc_index].copy() if self.preserve_dc else None
+
         # 1번 랜덤 영역 뽑기
         x_min = np.random.randint(width // 32, width // 2)
         x_max = np.random.randint(width // 2, width - width // 32)
@@ -249,90 +266,64 @@ class TwoRegionFreqTune(object):
         y_max = np.random.randint(height // 2, height - height // 32)
 
         # 2번 랜덤 영역 뽑기
-        x_min_2 = np.random.randint(width // 32, x_min+1)
+        x_min_2 = np.random.randint(width // 32, x_min + 1)
         x_max_2 = np.random.randint(x_max, width - width // 32)
-        y_min_2 = np.random.randint(height // 32, y_min+1)
+        y_min_2 = np.random.randint(height // 32, y_min + 1)
         y_max_2 = np.random.randint(y_max, height - height // 32)
 
         # 랜덤 배열 만들기
         matrix_1 = fft_1[x_min:x_max, y_min:y_max]
         matrix_2 = fft_1[x_min_2:x_max_2, y_min_2:y_max_2]
-        line_array = np.zeros((x_max_2-x_min_2, y_max_2-y_min_2))
 
         # 3번 배열
         B = 0.5
         b = np.random.uniform(0, B)
         array3 = np.random.uniform(1 - b, 1 + b, size=fft_1.shape)
-        # # 3번 배열 행렬곱, 다시 넣기
-        # fft_1 = fft_1 * array3
 
         # 1번 배열
         A = 5
         a = np.random.uniform(0, A)
         array1 = np.random.uniform(-a, a, size=matrix_1.shape)
-        # # 1번 배열 행렬곱, 다시 넣기
-        # fft_1[x_min:x_max, y_min:y_max] = matrix_1 * array1
-
-        # # 중심 좌표
-        # center = ((x_max-x_min) // 2, (y_max-y_min) // 2)
-        #
-        # corners_1 = [(x_min, y_min), (x_min, y_max), (x_max, y_min), (x_max, y_max)]
-        # corners_2 = [(x_min_2, y_min_2), (x_min_2, y_max_2), (x_max_2, y_min_2), (x_max_2, y_max_2)]
-        # corners_3 = [(0, 0), (0, 31), (31, 0), (31, 31)]
-        #
-        # max_distances_2 = [np.sqrt((center[0] - corner[0]) ** 2 + (center[1] - corner[1]) ** 2) for corner in corners_2]
-        # max_distance_2 = max(max_distances_2)
-
-        # 3차원 배열의 중심 좌표 -> 고주파수의 중심
-        center_index = tuple(s // 2 for s in matrix_1.shape)
-        # center = matrix_2[center_index]
-
-        # 각 좌표의 거리 계산
-        x_index, y_index, z_index = center_index
-        x = np.arange(matrix_2.shape[0])  # x 축 좌표 (0 ~ shape[0]-1)
-        y = np.arange(matrix_2.shape[1])  # y 축 좌표 (0 ~ shape[1]-1)
-        z = np.arange(matrix_2.shape[2])  # z 축 좌표 (0 ~ shape[2]-1)
-        xx, yy, zz = np.meshgrid(x, y, z, indexing='ij')
-        distances = np.sqrt(
-            (xx - center_index[0]) ** 2 +
-            (yy - center_index[1]) ** 2 +
-            (zz - center_index[2]) ** 2
-        )
 
         # 2번 배열
-        # C = 2.5
-        # c = np.random.uniform(0, C
-        # )
-        c_down = np.random.uniform(-a, 1-b)
-        c_up = np.random.uniform(1+b, a)
-        # uniform
-        array2 = np.random.uniform(c_down, c_up, size=matrix_2.shape)
-        # array2 = np.where(np.random.rand(*matrix_2.shape) > 0.5, c_down, c_up)
+        c_down = np.random.uniform(-a, 1 - b)
+        c_up = np.random.uniform(1 + b, a)
 
-        ##### 곡선/선형 변화 ########
-        # 거리를 최대 0부터 배열의 대각선 길이까지 정규화
-        # max_distance = np.sqrt(sum((np.array(matrix_2.shape) // 2) ** 2))
-        # normalized_distances = distances / max_distance
-        # # # 선형적으로 값을 변환(test6)
-        # # array2 = c_up - (c_up - c_down) * normalized_distances
-        # # 곡선으로 값을 변환(test7)
-        # k = 10
-        # array2 = c_down + (c_up - c_down) * (1 - np.log(1 + k * normalized_distances) / np.log(1 + k))
-        #####################
+        if self.mode == 'uniform':
+            base_array2 = np.random.uniform(c_down, c_up, size=matrix_2.shape)
+            array2 = 1 + (base_array2 - 1) * self.strength
+        else:
+            center_index = tuple(s // 2 for s in matrix_2.shape)
+            coords = [np.arange(s) for s in matrix_2.shape]
+            grids = np.meshgrid(*coords, indexing='ij')
+            distances = np.sqrt(sum((g - center_index[i]) ** 2 for i, g in enumerate(grids)))
+            max_distance = np.sqrt(sum((np.array(matrix_2.shape) // 2) ** 2))
+            normalized_distances = distances / max_distance if max_distance > 0 else np.zeros_like(distances)
 
-        #######
+            if self.mode == 'linear':
+                base_array2 = c_down + (c_up - c_down) * normalized_distances
+            elif self.mode == 'log':
+                k = 10
+                base_array2 = c_down + (c_up - c_down) * (1 - np.log(1 + k * normalized_distances) / np.log(1 + k))
+            else:
+                raise ValueError('Unsupported mode: %s' % self.mode)
+            array2 = 1 + (base_array2 - 1) * self.strength
+
         # 3번 배열 행렬곱, 다시 넣기
+        array3 = 1 + (array3 - 1) * self.strength
         fft_1 = fft_1 * array3
         # 2번 배열 행렬곱, 다시 넣기
         fft_1[x_min_2:x_max_2, y_min_2:y_max_2] = matrix_2 * array2
         # 1번 배열 행렬곱, 다시 넣기
+        array1 = 1 + array1 * self.strength
         fft_1[x_min:x_max, y_min:y_max] = matrix_1 * array1
-        #######
 
-        img = np.fft.ifftn(fft_1)
-        new_image = np.clip(img, 0, 255).astype(np.uint8)
+        if self.preserve_dc:
+            fft_1[dc_index] = original_dc
+
+        img_out = np.fft.ifftn(fft_1)
+        new_image = np.clip(np.real(img_out), 0, 255).astype(np.uint8)
         x = Image.fromarray(new_image)
-        x.show()
         return x
 
 class BlockFreqTune(object):

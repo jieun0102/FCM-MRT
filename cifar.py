@@ -57,8 +57,10 @@ parser.add_argument('--num-workers', type=int, default=4, help='Number of pre-fe
 
 #FreqTune options
 
-parser.add_argument('--p', default=0.5, type=float, help='Random Frequency region, FreqTune')
-
+parser.add_argument('--p', default=0.5, type=float, help='Probability for FreqTune augmentation')
+parser.add_argument('--algo', default='fcm_mrt', choices=['baseline', 'fcm', 'fcm_mrt'], help='Choose augmentation algorithm')
+parser.add_argument('--freqtune-mode', default='uniform', choices=['uniform', 'linear', 'log'], help='Choose the frequency perturbation shape for FCM-MRT')
+parser.add_argument('--freqtune-strength', default=1.0, type=float, help='Scale factor for frequency perturbation; 0.0 makes the transform effectively identity')
 
 args = parser.parse_args()
 print(args)
@@ -111,12 +113,14 @@ def pixmix(orig, mixing_pic, preprocess):
 
 def FreqTune(orig, preprocess):
     tensorize, normalize = preprocess['tensorize'], preprocess['normalize']
-    transform = FreqTune_transform.TwoRegionFreqTune()            ##############################
-    # transform = FreqTune_transform.FreqTune()                     ##############################
-    # transform = FreqTune_transform.OriginalFreqTune()
-    # transform = FreqTune_transform.ImprovedFreqTune()
-    # transform = FreqTune_transform.NormalFreqtune()
-    # transform = FreqTune_transform.baseline()            ##############################
+    if args.algo == 'baseline':
+        return baseline_image_tensorize(orig, preprocess)
+    elif args.algo == 'fcm':
+        transform = FreqTune_transform.FreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength)
+    elif args.algo == 'fcm_mrt':
+        transform = FreqTune_transform.TwoRegionFreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength)
+    else:
+        transform = FreqTune_transform.TwoRegionFreqTune(probability=args.p)
 
     transform_img = transform(orig)
     img = tensorize(transform_img)
@@ -301,6 +305,19 @@ class PGD(nn.Module):
 
         return adv_bx*2-1
 
+
+# Fix dataloader worker issue
+# https://github.com/pytorch/pytorch/issues/5059
+# Must be a module-level function (not nested in main()) so it can be
+# pickled by DataLoader worker processes on platforms using 'spawn'
+# (e.g. Windows), which lack fork()'s implicit inheritance.
+def wif(id):
+  uint64_seed = torch.initial_seed()
+  ss = np.random.SeedSequence([uint64_seed])
+  # More than 128 bits (4 32-bit words) would be overkill.
+  np.random.seed(ss.generate_state(4))
+
+
 def main():
   torch.manual_seed(1)
   np.random.seed(1)
@@ -349,14 +366,6 @@ def main():
   # train_data = BlockFreqTuneDataset(train_data, {'normalize': normalize, 'tensorize': to_tensor})
 
 
-  # Fix dataloader worker issue
-  # https://github.com/pytorch/pytorch/issues/5059
-  def wif(id):
-    uint64_seed = torch.initial_seed()
-    ss = np.random.SeedSequence([uint64_seed])
-    # More than 128 bits (4 32-bit words) would be overkill.
-    np.random.seed(ss.generate_state(4))
-
   train_loader = torch.utils.data.DataLoader(
       train_data,
       batch_size=args.batch_size,
@@ -398,7 +407,7 @@ def main():
 
   if args.resume:
     if os.path.isfile(args.resume):
-      checkpoint = torch.load(args.resume)
+      checkpoint = torch.load(args.resume, weights_only=False)
       start_epoch = checkpoint['epoch'] + 1
       best_acc = checkpoint['best_acc']
       net.load_state_dict(checkpoint['state_dict'])
@@ -419,27 +428,44 @@ def main():
     print('Mean Corruption Error: {:.3f}'.format(100 - 100. * test_c_acc))
     return
 
+  # The cosine LR schedule is a function of raw step count, not epoch, and
+  # its state is not saved in the checkpoint. Left alone, every --resume
+  # would restart the schedule at step 0 (LR back near the max) instead of
+  # continuing the decay from where training left off, causing loss/error
+  # to spike right after each resume.
+  if start_epoch > 0:
+    for group in optimizer.param_groups:
+      group['initial_lr'] = args.learning_rate
+    resume_last_epoch = start_epoch * len(train_loader) - 1
+  else:
+    resume_last_epoch = -1
+
   scheduler = torch.optim.lr_scheduler.LambdaLR(
       optimizer,
       lr_lambda=lambda step: get_lr(  # pylint: disable=g-long-lambda
           step,
           args.epochs * len(train_loader),
           1,  # lr_lambda computes multiplicative factor
-          1e-6 / args.learning_rate))
+          1e-6 / args.learning_rate),
+      last_epoch=resume_last_epoch)
+
+  resuming = bool(args.resume and os.path.isfile(args.resume))
 
   if not os.path.exists(args.save):
     os.makedirs(args.save)
-  elif args.save != './snapshots':
+  elif args.save != './snapshots' and not resuming:
     raise Exception('%s exists' % args.save)
   if not os.path.isdir(args.save):
     raise Exception('%s is not a dir' % args.save)
 
   log_path = os.path.join(args.save,
                           args.dataset + '_' + args.model + '_training_log.csv')
-  with open(log_path, 'w') as f:
-    f.write('epoch,time(s),train_loss,test_loss,test_error(%)\n')
+  if not os.path.exists(log_path):
+    with open(log_path, 'w') as f:
+      f.write('epoch,time(s),train_loss,test_loss,test_error(%)\n')
 
-  best_acc = 0
+  if not resuming:
+    best_acc = 0
   print('Beginning training from epoch:', start_epoch + 1)
   for epoch in range(start_epoch, args.epochs):
     begin_time = time.time()

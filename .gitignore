@@ -1,0 +1,16 @@
+# datasets (large, downloadable separately per README)
+data/
+
+# trained model checkpoints / logs
+snapshots/
+
+# generated comparison images / analysis outputs
+outputs/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# editor
+.vscode/
