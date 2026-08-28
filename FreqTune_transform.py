@@ -315,7 +315,11 @@ class TwoRegionFreqTune(object):
         # 2번 배열 행렬곱, 다시 넣기
         fft_1[x_min_2:x_max_2, y_min_2:y_max_2] = matrix_2 * array2
         # 1번 배열 행렬곱, 다시 넣기
-        array1 = 1 + array1 * self.strength
+        # Ch (paper) is centered at 0 ([-a, a]), unlike Cl/Cm which are
+        # centered at 1 — so strength must scale it directly, not via a
+        # "1 + (x-1)*strength" blend toward 1 (that would bias it toward a
+        # no-op at low strength instead of toward the paper's Ch=0 no-op).
+        array1 = array1 * self.strength
         fft_1[x_min:x_max, y_min:y_max] = matrix_1 * array1
 
         if self.preserve_dc:
