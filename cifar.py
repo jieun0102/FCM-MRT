@@ -54,6 +54,7 @@ parser.add_argument('--print-freq', type=int, default=50, help='Training loss pr
 
 # Acceleration
 parser.add_argument('--num-workers', type=int, default=4, help='Number of pre-fetching threads.')
+parser.add_argument('--seed', type=int, default=1, help='Random seed for torch/numpy (paper averages 10 runs with different seeds)')
 
 #FreqTune options
 
@@ -319,8 +320,8 @@ def wif(id):
 
 
 def main():
-  torch.manual_seed(1)
-  np.random.seed(1)
+  torch.manual_seed(args.seed)
+  np.random.seed(args.seed)
 
   # Load datasets
   train_transform = transforms.Compose(
@@ -428,26 +429,13 @@ def main():
     print('Mean Corruption Error: {:.3f}'.format(100 - 100. * test_c_acc))
     return
 
-  # The cosine LR schedule is a function of raw step count, not epoch, and
-  # its state is not saved in the checkpoint. Left alone, every --resume
-  # would restart the schedule at step 0 (LR back near the max) instead of
-  # continuing the decay from where training left off, causing loss/error
-  # to spike right after each resume.
-  if start_epoch > 0:
-    for group in optimizer.param_groups:
-      group['initial_lr'] = args.learning_rate
-    resume_last_epoch = start_epoch * len(train_loader) - 1
-  else:
-    resume_last_epoch = -1
-
   scheduler = torch.optim.lr_scheduler.LambdaLR(
       optimizer,
       lr_lambda=lambda step: get_lr(  # pylint: disable=g-long-lambda
           step,
           args.epochs * len(train_loader),
           1,  # lr_lambda computes multiplicative factor
-          1e-6 / args.learning_rate),
-      last_epoch=resume_last_epoch)
+          1e-6 / args.learning_rate))
 
   resuming = bool(args.resume and os.path.isfile(args.resume))
 
