@@ -58,8 +58,9 @@ class baseline(object):
         return x
 
 class OriginalFreqTune(object):
-    def __init__(self, probability=0.5):
+    def __init__(self, probability=0.5, preserve_dc=False):
         self.probability = probability
+        self.preserve_dc = preserve_dc
 
     def __call__(self, x):
         if random.uniform(0, 1) > self.probability:
@@ -69,6 +70,9 @@ class OriginalFreqTune(object):
         width = 32
         img = np.array(x).astype(np.uint8)
         fft_1 = np.fft.fftn(img)
+
+        dc_index = tuple(0 for _ in range(fft_1.ndim))
+        original_dc = fft_1[dc_index].copy() if self.preserve_dc else None
 
         # img pixel: matrix, make array: array
         # 랜덤 영역 뽑기
@@ -96,6 +100,9 @@ class OriginalFreqTune(object):
         fft_1 = fft_1 * array2
         # 행렬곱, 다시 넣기
         fft_1[x_min:x_max, y_min:y_max] = matrix * array1
+
+        if self.preserve_dc:
+            fft_1[dc_index] = original_dc
 
         img = np.fft.ifftn(fft_1)
 

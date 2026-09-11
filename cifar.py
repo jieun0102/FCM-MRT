@@ -118,7 +118,12 @@ def FreqTune(orig, preprocess):
     if args.algo == 'baseline':
         return baseline_image_tensorize(orig, preprocess)
     elif args.algo == 'fcm':
-        transform = FreqTune_transform.FreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength, preserve_dc=args.preserve_dc)
+        # OriginalFreqTune matches the paper's FCM formulas exactly
+        # (Ch=[-a,a], Cl=[1-b,1+b] with fresh random a/b per call). The
+        # FreqTune class looks like the "current" one by name but is a
+        # different, distance-based-falloff experiment — not what the
+        # paper describes.
+        transform = FreqTune_transform.OriginalFreqTune(probability=args.p, preserve_dc=args.preserve_dc)
     elif args.algo == 'fcm_mrt':
         transform = FreqTune_transform.TwoRegionFreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength, preserve_dc=args.preserve_dc)
     else:
