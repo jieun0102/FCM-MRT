@@ -62,6 +62,7 @@ parser.add_argument('--p', default=0.5, type=float, help='Probability for FreqTu
 parser.add_argument('--algo', default='fcm_mrt', choices=['baseline', 'fcm', 'fcm_mrt'], help='Choose augmentation algorithm')
 parser.add_argument('--freqtune-mode', default='uniform', choices=['uniform', 'linear', 'log'], help='Choose the frequency perturbation shape for FCM-MRT')
 parser.add_argument('--freqtune-strength', default=1.0, type=float, help='Scale factor for frequency perturbation; 0.0 makes the transform effectively identity')
+parser.add_argument('--preserve-dc', action='store_true', help='Restore the DC (average-brightness) frequency component after perturbation, for FCM-MRT')
 
 args = parser.parse_args()
 print(args)
@@ -119,9 +120,9 @@ def FreqTune(orig, preprocess):
     elif args.algo == 'fcm':
         transform = FreqTune_transform.FreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength)
     elif args.algo == 'fcm_mrt':
-        transform = FreqTune_transform.TwoRegionFreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength)
+        transform = FreqTune_transform.TwoRegionFreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength, preserve_dc=args.preserve_dc)
     else:
-        transform = FreqTune_transform.TwoRegionFreqTune(probability=args.p)
+        transform = FreqTune_transform.TwoRegionFreqTune(probability=args.p, preserve_dc=args.preserve_dc)
 
     transform_img = transform(orig)
     img = tensorize(transform_img)
