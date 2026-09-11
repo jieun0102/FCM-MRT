@@ -118,7 +118,7 @@ def FreqTune(orig, preprocess):
     if args.algo == 'baseline':
         return baseline_image_tensorize(orig, preprocess)
     elif args.algo == 'fcm':
-        transform = FreqTune_transform.FreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength)
+        transform = FreqTune_transform.FreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength, preserve_dc=args.preserve_dc)
     elif args.algo == 'fcm_mrt':
         transform = FreqTune_transform.TwoRegionFreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength, preserve_dc=args.preserve_dc)
     else:
