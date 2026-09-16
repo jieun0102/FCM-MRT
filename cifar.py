@@ -63,6 +63,7 @@ parser.add_argument('--algo', default='fcm_mrt', choices=['baseline', 'fcm', 'fc
 parser.add_argument('--freqtune-mode', default='uniform', choices=['uniform', 'linear', 'log'], help='Choose the frequency perturbation shape for FCM-MRT')
 parser.add_argument('--freqtune-strength', default=1.0, type=float, help='Scale factor for frequency perturbation; 0.0 makes the transform effectively identity')
 parser.add_argument('--preserve-dc', action='store_true', help='Restore the DC (average-brightness) frequency component after perturbation, for FCM-MRT')
+parser.add_argument('--contrast-jitter', type=float, default=0.0, help='ColorJitter contrast strength applied before FCM/FCM-MRT (0 = disabled); targets CIFAR-10-C contrast/noise corruptions that frequency-domain augmentation alone does not cover')
 
 args = parser.parse_args()
 print(args)
@@ -330,9 +331,11 @@ def main():
   np.random.seed(args.seed)
 
   # Load datasets
-  train_transform = transforms.Compose(
-      [transforms.RandomHorizontalFlip(),
-       transforms.RandomCrop(32, padding=4)])
+  train_transform_ops = [transforms.RandomHorizontalFlip(),
+                         transforms.RandomCrop(32, padding=4)]
+  if args.contrast_jitter > 0:
+    train_transform_ops.append(transforms.ColorJitter(contrast=args.contrast_jitter))
+  train_transform = transforms.Compose(train_transform_ops)
   # mixing_set_transform = transforms.Compose(
   #     [transforms.Resize(36),
   #      transforms.RandomCrop(32)])
