@@ -18,7 +18,29 @@ import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 from torchvision import datasets
 from torchvision import transforms
+from PIL import Image
 import FreqTune_transform
+
+
+class RandomSaltPepper(object):
+  """Salt-and-pepper noise augmentation; targets CIFAR-10-C impulse_noise,
+  which frequency-domain (FCM/FCM-MRT) and contrast augmentation don't cover."""
+
+  def __init__(self, amount=0.0, salt_vs_pepper=0.5):
+    self.amount = amount
+    self.salt_vs_pepper = salt_vs_pepper
+
+  def __call__(self, img):
+    if self.amount <= 0:
+      return img
+    arr = np.array(img)
+    mask = np.random.rand(*arr.shape[:2])
+    salt = mask < (self.amount * self.salt_vs_pepper)
+    pepper = (mask >= (self.amount * self.salt_vs_pepper)) & (mask < self.amount)
+    arr[salt] = 255
+    arr[pepper] = 0
+    return Image.fromarray(arr)
+
 
 parser = argparse.ArgumentParser(description='Trains a CIFAR Classifier', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10', 'cifar100'], help='Choose between CIFAR-10, CIFAR-100.')
@@ -64,6 +86,7 @@ parser.add_argument('--freqtune-mode', default='uniform', choices=['uniform', 'l
 parser.add_argument('--freqtune-strength', default=1.0, type=float, help='Scale factor for frequency perturbation; 0.0 makes the transform effectively identity')
 parser.add_argument('--preserve-dc', action='store_true', help='Restore the DC (average-brightness) frequency component after perturbation, for FCM-MRT')
 parser.add_argument('--contrast-jitter', type=float, default=0.0, help='ColorJitter contrast strength applied before FCM/FCM-MRT (0 = disabled); targets CIFAR-10-C contrast/noise corruptions that frequency-domain augmentation alone does not cover')
+parser.add_argument('--impulse-noise-prob', type=float, default=0.0, help='Fraction of pixels flipped to salt/pepper before FCM/FCM-MRT (0 = disabled); targets CIFAR-10-C impulse_noise, which contrast-jitter and frequency-domain augmentation alone do not cover')
 
 args = parser.parse_args()
 print(args)
@@ -335,6 +358,8 @@ def main():
                          transforms.RandomCrop(32, padding=4)]
   if args.contrast_jitter > 0:
     train_transform_ops.append(transforms.ColorJitter(contrast=args.contrast_jitter))
+  if args.impulse_noise_prob > 0:
+    train_transform_ops.append(RandomSaltPepper(amount=args.impulse_noise_prob))
   train_transform = transforms.Compose(train_transform_ops)
   # mixing_set_transform = transforms.Compose(
   #     [transforms.Resize(36),
