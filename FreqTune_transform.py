@@ -344,6 +344,100 @@ class TwoRegionFreqTune(object):
         x = Image.fromarray(new_image)
         return x
 
+
+class RadialFreqTune(object):
+    """FCM-MRT variant with frequency regions defined by true radial
+    distance from DC after fftshift, instead of raw (unshifted) FFT-index
+    rectangles. TwoRegionFreqTune's box selection is always centered on the
+    raw array's middle index, which is the Nyquist bin, not DC — so its
+    "regions" mix low- and high-frequency content in an uncontrolled way.
+    Here, low-frequency core -> mild Cl-style perturbation, outer
+    high-frequency band -> strong Ch-style perturbation, and the band
+    between them -> the tunable mode (uniform/linear/log), matching the
+    paper's low/mid/high-frequency framing literally.
+    """
+
+    def __init__(self, probability=0.5, mode='uniform', strength=1.0, preserve_dc=False):
+        self.probability = probability
+        self.mode = mode
+        self.strength = strength
+        self.preserve_dc = preserve_dc
+
+    def __call__(self, x):
+        if random.uniform(0, 1) > self.probability:
+            return x
+
+        height = 32
+        width = 32
+        img = np.array(x)
+        fft_1 = np.fft.fftn(img)
+
+        dc_index = tuple(0 for _ in range(fft_1.ndim))
+        original_dc = fft_1[dc_index].copy() if self.preserve_dc else None
+
+        # Move DC to the center along the spatial axes only (leave the color
+        # channel axis untouched -- it has no spatial-frequency meaning).
+        shifted = np.fft.fftshift(fft_1, axes=(0, 1))
+
+        yy, xx = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
+        dist = np.sqrt((xx - width // 2) ** 2 + (yy - height // 2) ** 2)[:, :, None]
+        max_r = np.sqrt((width / 2) ** 2 + (height / 2) ** 2)
+
+        # Random low/mid and mid/high radius cutoffs, redrawn every call --
+        # same spirit as TwoRegionFreqTune's randomized box sizes.
+        r1 = np.random.uniform(0, max_r * 0.5)
+        r2 = np.random.uniform(r1, max_r)
+
+        low_mask = dist < r1
+        high_mask = dist >= r2
+        mid_mask = ~low_mask & ~high_mask
+
+        # Cl: mild perturbation for the low-frequency core (near true DC)
+        B = 0.5
+        b = np.random.uniform(0, B)
+        array_low = np.random.uniform(1 - b, 1 + b, size=shifted.shape)
+        array_low = 1 + (array_low - 1) * self.strength
+
+        # Ch: strong perturbation for the high-frequency outer band
+        A = 5
+        a = np.random.uniform(0, A)
+        array_high = np.random.uniform(-a, a, size=shifted.shape)
+        array_high = array_high * self.strength
+
+        # Mid band: tunable shape between Cl and Ch, by mode
+        c_down = np.random.uniform(-a, 1 - b)
+        c_up = np.random.uniform(1 + b, a)
+        if self.mode == 'uniform':
+            base_mid = np.random.uniform(c_down, c_up, size=shifted.shape)
+        else:
+            denom = max(r2 - r1, 1e-8)
+            normalized = np.clip((dist - r1) / denom, 0, 1)
+            normalized = np.broadcast_to(normalized, shifted.shape)
+            if self.mode == 'linear':
+                base_mid = c_down + (c_up - c_down) * normalized
+            elif self.mode == 'log':
+                k = 10
+                base_mid = c_down + (c_up - c_down) * (1 - np.log(1 + k * normalized) / np.log(1 + k))
+            else:
+                raise ValueError('Unsupported mode: %s' % self.mode)
+        array_mid = 1 + (base_mid - 1) * self.strength
+
+        perturb = np.ones_like(shifted, dtype=np.float64)
+        perturb = np.where(low_mask, array_low, perturb)
+        perturb = np.where(mid_mask, array_mid, perturb)
+        perturb = np.where(high_mask, array_high, perturb)
+
+        shifted = shifted * perturb
+        fft_1 = np.fft.ifftshift(shifted, axes=(0, 1))
+
+        if self.preserve_dc:
+            fft_1[dc_index] = original_dc
+
+        img_out = np.fft.ifftn(fft_1)
+        new_image = np.clip(np.real(img_out), 0, 255).astype(np.uint8)
+        return Image.fromarray(new_image)
+
+
 class BlockFreqTune(object):
     def __init__(self, probability=0.5):
         self.probability = probability
