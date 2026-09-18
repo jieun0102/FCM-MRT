@@ -114,6 +114,66 @@ class OriginalFreqTune(object):
         return x
 
 
+class RadialOriginalFreqTune(object):
+    """FCM (OriginalFreqTune) variant with the low/high frequency split
+    defined by true radial distance from DC after fftshift, instead of a
+    raw FFT-index rectangle. Same fix as RadialFreqTune, applied to FCM's
+    single-region formulation (one Ch region, one global Cl) instead of
+    FCM-MRT's three-region one.
+    """
+
+    def __init__(self, probability=0.5, strength=1.0, preserve_dc=False):
+        self.probability = probability
+        self.strength = strength
+        self.preserve_dc = preserve_dc
+
+    def __call__(self, x):
+        if random.uniform(0, 1) > self.probability:
+            return x
+
+        height = 32
+        width = 32
+        img = np.array(x).astype(np.uint8)
+        fft_1 = np.fft.fftn(img)
+
+        dc_index = tuple(0 for _ in range(fft_1.ndim))
+        original_dc = fft_1[dc_index].copy() if self.preserve_dc else None
+
+        shifted = np.fft.fftshift(fft_1, axes=(0, 1))
+
+        yy, xx = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
+        dist = np.sqrt((xx - width // 2) ** 2 + (yy - height // 2) ** 2)[:, :, None]
+        max_r = np.sqrt((width / 2) ** 2 + (height / 2) ** 2)
+
+        # Random low/high radius cutoff, redrawn every call -- same spirit
+        # as OriginalFreqTune's randomized box size.
+        r = np.random.uniform(0, max_r)
+        high_mask = dist >= r
+
+        # Cl: mild perturbation for the low-frequency core (near true DC)
+        B = 0.5
+        b = np.random.uniform(0, B)
+        array_low = np.random.uniform(1 - b, 1 + b, size=shifted.shape)
+        array_low = 1 + (array_low - 1) * self.strength
+
+        # Ch: strong perturbation for the high-frequency outer band
+        A = 5
+        a = np.random.uniform(0, A)
+        array_high = np.random.uniform(-a, a, size=shifted.shape)
+        array_high = array_high * self.strength
+
+        perturb = np.where(high_mask, array_high, array_low)
+        shifted = shifted * perturb
+        fft_1 = np.fft.ifftshift(shifted, axes=(0, 1))
+
+        if self.preserve_dc:
+            fft_1[dc_index] = original_dc
+
+        img_out = np.fft.ifftn(fft_1)
+        new_image = np.clip(np.real(img_out), 0, 255).astype(np.uint8)
+        return Image.fromarray(new_image)
+
+
 #GPT
 class ImprovedFreqTune:
     def __init__(self, probability=0.5, A=5, B=0.5):

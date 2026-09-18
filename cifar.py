@@ -84,7 +84,7 @@ parser.add_argument('--p', default=0.5, type=float, help='Probability for FreqTu
 parser.add_argument('--algo', default='fcm_mrt', choices=['baseline', 'fcm', 'fcm_mrt'], help='Choose augmentation algorithm')
 parser.add_argument('--freqtune-mode', default='uniform', choices=['uniform', 'linear', 'log'], help='Choose the frequency perturbation shape for FCM-MRT')
 parser.add_argument('--freqtune-strength', default=1.0, type=float, help='Scale factor for frequency perturbation; 0.0 makes the transform effectively identity')
-parser.add_argument('--freqtune-radial', action='store_true', help='For fcm_mrt: define low/mid/high frequency regions by true radial distance from DC (after fftshift) instead of raw FFT-index rectangles, which mix low/high frequency content')
+parser.add_argument('--freqtune-radial', action='store_true', help='For fcm/fcm_mrt: define frequency regions by true radial distance from DC (after fftshift) instead of raw FFT-index rectangles, which mix low/high frequency content')
 parser.add_argument('--preserve-dc', action='store_true', help='Restore the DC (average-brightness) frequency component after perturbation, for FCM-MRT')
 parser.add_argument('--contrast-jitter', type=float, default=0.0, help='ColorJitter contrast strength applied before FCM/FCM-MRT (0 = disabled); targets CIFAR-10-C contrast/noise corruptions that frequency-domain augmentation alone does not cover')
 parser.add_argument('--impulse-noise-prob', type=float, default=0.0, help='Fraction of pixels flipped to salt/pepper before FCM/FCM-MRT (0 = disabled); targets CIFAR-10-C impulse_noise, which contrast-jitter and frequency-domain augmentation alone do not cover')
@@ -148,7 +148,10 @@ def FreqTune(orig, preprocess):
         # FreqTune class looks like the "current" one by name but is a
         # different, distance-based-falloff experiment — not what the
         # paper describes.
-        transform = FreqTune_transform.OriginalFreqTune(probability=args.p, preserve_dc=args.preserve_dc)
+        if args.freqtune_radial:
+            transform = FreqTune_transform.RadialOriginalFreqTune(probability=args.p, strength=args.freqtune_strength, preserve_dc=args.preserve_dc)
+        else:
+            transform = FreqTune_transform.OriginalFreqTune(probability=args.p, preserve_dc=args.preserve_dc)
     elif args.algo == 'fcm_mrt':
         if args.freqtune_radial:
             transform = FreqTune_transform.RadialFreqTune(probability=args.p, mode=args.freqtune_mode, strength=args.freqtune_strength, preserve_dc=args.preserve_dc)
