@@ -3,12 +3,19 @@ files on the same axes, for comparing convergence speed across runs.
 
 Usage:
     python3 plot_convergence.py <label1> <csv1> [<label2> <csv2> ...] [-o out.png]
+    python3 plot_convergence.py <label1> <csv1> [<label2> <csv2> ...] --show
 """
 import csv
 import sys
 
+show = '--show' in sys.argv
+if show:
+    sys.argv.remove('--show')
+
 import matplotlib
-matplotlib.use('Agg')
+if not show:
+    # Agg needs no display; use it whenever we're just saving a PNG.
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 
@@ -46,8 +53,11 @@ def main():
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
-    print('Saved to', out_path)
+    if show:
+        plt.show()
+    else:
+        plt.savefig(out_path, dpi=150)
+        print('Saved to', out_path)
 
 
 if __name__ == '__main__':
