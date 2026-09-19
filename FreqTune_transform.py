@@ -3,6 +3,24 @@ import numpy as np
 from PIL import Image
 
 
+def _radial_distance_grid(width, height, elliptical=False):
+    """Distance of every pixel from the array center. With elliptical=True,
+    stretches the distance by a random aspect ratio along a random rotation
+    axis each call, so equal-distance contours are ellipses instead of
+    circles -- reintroducing the shape diversity a rectangle had (varying
+    width/height independently), while staying centered on true DC."""
+    yy, xx = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
+    dx = xx - width // 2
+    dy = yy - height // 2
+    if elliptical:
+        angle = np.random.uniform(0, np.pi)
+        aspect = np.random.uniform(0.5, 2.0)
+        dx_rot = dx * np.cos(angle) + dy * np.sin(angle)
+        dy_rot = -dx * np.sin(angle) + dy * np.cos(angle)
+        return np.sqrt((dx_rot * aspect) ** 2 + (dy_rot / aspect) ** 2)
+    return np.sqrt(dx ** 2 + dy ** 2)
+
+
 def _preserve_dc_and_mean(fft, source_img, output_img):
     dc_index = tuple(0 for _ in range(source_img.ndim))
     fft[dc_index] = fft[dc_index].copy()
@@ -122,7 +140,7 @@ class RadialOriginalFreqTune(object):
     FCM-MRT's three-region one.
     """
 
-    def __init__(self, probability=0.5, strength=1.0, preserve_dc=False, match_rect_area=False):
+    def __init__(self, probability=0.5, strength=1.0, preserve_dc=False, match_rect_area=False, elliptical=False):
         self.probability = probability
         self.strength = strength
         self.preserve_dc = preserve_dc
@@ -132,6 +150,9 @@ class RadialOriginalFreqTune(object):
         # the rectangle's ~22%). This isolates the shape (circle vs box)
         # as the only difference, for a fair ablation of shape alone.
         self.match_rect_area = match_rect_area
+        # If True, use a randomly rotated ellipse (random aspect ratio +
+        # angle each call) instead of a perfect circle, for shape diversity.
+        self.elliptical = elliptical
 
     def __call__(self, x):
         if random.uniform(0, 1) > self.probability:
@@ -147,8 +168,7 @@ class RadialOriginalFreqTune(object):
 
         shifted = np.fft.fftshift(fft_1, axes=(0, 1))
 
-        yy, xx = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
-        dist_2d = np.sqrt((xx - width // 2) ** 2 + (yy - height // 2) ** 2)
+        dist_2d = _radial_distance_grid(width, height, elliptical=self.elliptical)
         dist = dist_2d[:, :, None]
         max_r = np.sqrt((width / 2) ** 2 + (height / 2) ** 2)
 
@@ -434,7 +454,7 @@ class RadialFreqTune(object):
     paper's low/mid/high-frequency framing literally.
     """
 
-    def __init__(self, probability=0.5, mode='uniform', strength=1.0, preserve_dc=False, match_rect_area=False):
+    def __init__(self, probability=0.5, mode='uniform', strength=1.0, preserve_dc=False, match_rect_area=False, elliptical=False):
         self.probability = probability
         self.mode = mode
         self.strength = strength
@@ -445,6 +465,9 @@ class RadialFreqTune(object):
         # r1,r2 ~ Uniform, which gives noticeably different average areas.
         # Isolates shape (circle vs box) as the only difference.
         self.match_rect_area = match_rect_area
+        # If True, use a randomly rotated ellipse (random aspect ratio +
+        # angle each call) instead of a perfect circle, for shape diversity.
+        self.elliptical = elliptical
 
     def __call__(self, x):
         if random.uniform(0, 1) > self.probability:
@@ -462,8 +485,7 @@ class RadialFreqTune(object):
         # channel axis untouched -- it has no spatial-frequency meaning).
         shifted = np.fft.fftshift(fft_1, axes=(0, 1))
 
-        yy, xx = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
-        dist_2d = np.sqrt((xx - width // 2) ** 2 + (yy - height // 2) ** 2)
+        dist_2d = _radial_distance_grid(width, height, elliptical=self.elliptical)
         dist = dist_2d[:, :, None]
         max_r = np.sqrt((width / 2) ** 2 + (height / 2) ** 2)
 
