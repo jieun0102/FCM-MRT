@@ -122,10 +122,16 @@ class RadialOriginalFreqTune(object):
     FCM-MRT's three-region one.
     """
 
-    def __init__(self, probability=0.5, strength=1.0, preserve_dc=False):
+    def __init__(self, probability=0.5, strength=1.0, preserve_dc=False, match_rect_area=False):
         self.probability = probability
         self.strength = strength
         self.preserve_dc = preserve_dc
+        # If True, draw the high-frequency band's area from the same
+        # distribution as OriginalFreqTune's rectangular box area (instead
+        # of r ~ Uniform(0, max_r), which averages ~55% high-freq area vs
+        # the rectangle's ~22%). This isolates the shape (circle vs box)
+        # as the only difference, for a fair ablation of shape alone.
+        self.match_rect_area = match_rect_area
 
     def __call__(self, x):
         if random.uniform(0, 1) > self.probability:
@@ -142,12 +148,23 @@ class RadialOriginalFreqTune(object):
         shifted = np.fft.fftshift(fft_1, axes=(0, 1))
 
         yy, xx = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
-        dist = np.sqrt((xx - width // 2) ** 2 + (yy - height // 2) ** 2)[:, :, None]
+        dist_2d = np.sqrt((xx - width // 2) ** 2 + (yy - height // 2) ** 2)
+        dist = dist_2d[:, :, None]
         max_r = np.sqrt((width / 2) ** 2 + (height / 2) ** 2)
 
-        # Random low/high radius cutoff, redrawn every call -- same spirit
-        # as OriginalFreqTune's randomized box size.
-        r = np.random.uniform(0, max_r)
+        if self.match_rect_area:
+            bx_min = np.random.randint(width // 32, width // 2)
+            bx_max = np.random.randint(width // 2, width - width // 32)
+            by_min = np.random.randint(height // 32, height // 2)
+            by_max = np.random.randint(height // 2, height - height // 32)
+            target_high_pixels = (bx_max - bx_min) * (by_max - by_min)
+            sorted_dist = np.sort(dist_2d, axis=None)
+            idx = int(np.clip(sorted_dist.size - target_high_pixels, 0, sorted_dist.size - 1))
+            r = sorted_dist[idx]
+        else:
+            # Random low/high radius cutoff, redrawn every call -- same
+            # spirit as OriginalFreqTune's randomized box size.
+            r = np.random.uniform(0, max_r)
         high_mask = dist >= r
 
         # Cl: mild perturbation for the low-frequency core (near true DC)
@@ -417,11 +434,17 @@ class RadialFreqTune(object):
     paper's low/mid/high-frequency framing literally.
     """
 
-    def __init__(self, probability=0.5, mode='uniform', strength=1.0, preserve_dc=False):
+    def __init__(self, probability=0.5, mode='uniform', strength=1.0, preserve_dc=False, match_rect_area=False):
         self.probability = probability
         self.mode = mode
         self.strength = strength
         self.preserve_dc = preserve_dc
+        # If True, draw r1/r2 so the low/mid/high band areas match
+        # TwoRegionFreqTune's box-area distribution (region1 = Ch area,
+        # region2\region1 = mid area, outside region2 = Cl area), instead of
+        # r1,r2 ~ Uniform, which gives noticeably different average areas.
+        # Isolates shape (circle vs box) as the only difference.
+        self.match_rect_area = match_rect_area
 
     def __call__(self, x):
         if random.uniform(0, 1) > self.probability:
@@ -440,13 +463,37 @@ class RadialFreqTune(object):
         shifted = np.fft.fftshift(fft_1, axes=(0, 1))
 
         yy, xx = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
-        dist = np.sqrt((xx - width // 2) ** 2 + (yy - height // 2) ** 2)[:, :, None]
+        dist_2d = np.sqrt((xx - width // 2) ** 2 + (yy - height // 2) ** 2)
+        dist = dist_2d[:, :, None]
         max_r = np.sqrt((width / 2) ** 2 + (height / 2) ** 2)
 
-        # Random low/mid and mid/high radius cutoffs, redrawn every call --
-        # same spirit as TwoRegionFreqTune's randomized box sizes.
-        r1 = np.random.uniform(0, max_r * 0.5)
-        r2 = np.random.uniform(r1, max_r)
+        if self.match_rect_area:
+            bx_min = np.random.randint(width // 32, width // 2)
+            bx_max = np.random.randint(width // 2, width - width // 32)
+            by_min = np.random.randint(height // 32, height // 2)
+            by_max = np.random.randint(height // 2, height - height // 32)
+            bx_min_2 = np.random.randint(width // 32, bx_min + 1)
+            bx_max_2 = np.random.randint(bx_max, width - width // 32)
+            by_min_2 = np.random.randint(height // 32, by_min + 1)
+            by_max_2 = np.random.randint(by_max, height - height // 32)
+
+            target_ch_pixels = (bx_max - bx_min) * (by_max - by_min)
+            target_region2_pixels = (bx_max_2 - bx_min_2) * (by_max_2 - by_min_2)
+
+            sorted_dist = np.sort(dist_2d, axis=None)
+            n_total = sorted_dist.size
+            idx_r2 = int(np.clip(n_total - target_ch_pixels, 0, n_total - 1))
+            idx_r1 = int(np.clip(n_total - target_region2_pixels, 0, n_total - 1))
+            r2 = sorted_dist[idx_r2]
+            r1 = sorted_dist[idx_r1]
+            if r1 > r2:
+                r1, r2 = r2, r1
+        else:
+            # Random low/mid and mid/high radius cutoffs, redrawn every
+            # call -- same spirit as TwoRegionFreqTune's randomized box
+            # sizes.
+            r1 = np.random.uniform(0, max_r * 0.5)
+            r2 = np.random.uniform(r1, max_r)
 
         low_mask = dist < r1
         high_mask = dist >= r2
